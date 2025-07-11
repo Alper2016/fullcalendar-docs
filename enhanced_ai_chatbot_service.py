@@ -456,11 +456,36 @@ class EnhancedAIChatbotService:
             # Get or create conversation memory
             memory = EnhancedAIChatbotService.get_or_create_memory(user_id, session_id)
             
-            # Generate enhanced context
-            context = EnhancedAIChatbotService.generate_enhanced_lead_context(lead_data, campaign, memory)
-            
             # Determine analysis type from question
             analysis_type = EnhancedAIChatbotService._determine_analysis_type(user_question)
+            
+            # Handle memory clearing requests
+            if analysis_type == "memory_clear":
+                EnhancedAIChatbotService.clear_conversation(user_id, session_id)
+                return {
+                    "analysis": "<p>Memory cleared! Starting fresh. How can I help you today?</p>",
+                    "question": user_question,
+                    "campaign_id": campaign.id,
+                    "lead_count": len(lead_data),
+                    "analysis_type": "memory_clear",
+                    "conversation_id": f"{user_id}_{session_id}",
+                    "insights_generated": 0
+                }
+            
+            # Handle memory check requests (asking if AI remembers after clearing)
+            if analysis_type == "memory_check":
+                return {
+                    "analysis": "<p>Nope, fresh start! What's on your mind?</p>",
+                    "question": user_question,
+                    "campaign_id": campaign.id,
+                    "lead_count": len(lead_data),
+                    "analysis_type": "memory_check",
+                    "conversation_id": f"{user_id}_{session_id}",
+                    "insights_generated": 0
+                }
+            
+            # Generate enhanced context
+            context = EnhancedAIChatbotService.generate_enhanced_lead_context(lead_data, campaign, memory)
             
             # Build enhanced prompt
             prompt = EnhancedAIChatbotService._build_enhanced_chatbot_prompt(
@@ -504,7 +529,12 @@ class EnhancedAIChatbotService:
         """Determine the type of analysis based on the user's question"""
         question_lower = question.lower()
         
-        if any(word in question_lower for word in ['trend', 'over time', 'change', 'improve', 'decline']):
+        # Check for memory clearing requests first
+        if any(phrase in question_lower for phrase in ['erase memory', 'clear context', 'forget', 'reset', 'clear memory', 'erase context']):
+            return "memory_clear"
+        elif any(word in question_lower for word in ['remember', 'recall'] and 'last' in question_lower):
+            return "memory_check"
+        elif any(word in question_lower for word in ['trend', 'over time', 'change', 'improve', 'decline']):
             return "trend_analysis"
         elif any(word in question_lower for word in ['predict', 'forecast', 'future', 'expect']):
             return "predictive_analysis"
@@ -579,12 +609,18 @@ INTELLIGENT RESPONSE RULES:
    - Example: <p>Hey there! 👋 How can I help you today?</p>
    - Example: <p>Hi! What would you like to know about your campaign?</p>
 
-3. **Brevity Rule**: 
+3. **Memory Management Rules**:
+   - If user asks to "erase memory" or "clear context": Confirm and start completely fresh
+   - After memory clear: Never reference previous conversations or repeat old questions
+   - Don't contradict yourself about memory state
+   - If memory is cleared, treat user as completely new
+
+4. **Brevity Rule**: 
    - Keep responses SHORT unless user asks for details or specific analysis
    - Default to 1-2 sentences, not paragraphs
    - Only provide full analysis when explicitly requested
 
-4. **Analysis Type Adaptation**:
+5. **Analysis Type Adaptation**:
    - Trend Analysis: Focus on changes over time, patterns, and trajectory
    - Predictive: Emphasize forecasts, likelihood, and future scenarios
    - Sentiment: Highlight emotional indicators and customer satisfaction
@@ -592,24 +628,24 @@ INTELLIGENT RESPONSE RULES:
    - Recommendations: Provide specific, prioritized action items
    - Risk: Identify threats, challenges, and mitigation strategies
 
-5. **Human-like Communication**:
+6. **Human-like Communication**:
    - Sound natural and conversational, not robotic
    - Use simple language, avoid jargon
    - Match the user's energy level (casual for casual, detailed for detailed requests)
    - Don't overwhelm with data unless specifically asked
 
-6. **Advanced Insights** (when requested):
+7. **Advanced Insights** (when requested):
    - Only provide detailed analysis when user asks for it
    - Give confidence levels for predictions
    - Connect insights to business impact
    - Be specific but concise
 
-7. **Interactive Intelligence**:
+8. **Interactive Intelligence**:
    - For simple questions: Brief answer + 1 follow-up question max
    - For complex analysis: Detailed response + 2-3 follow-up questions
    - Always gauge if user wants more detail before providing it
 
-8. **Smart Recommendations**:
+9. **Smart Recommendations**:
    - Prioritize recommendations by impact and feasibility
    - Provide specific next steps, not just general advice
    - Include timeline suggestions when appropriate
@@ -633,6 +669,15 @@ RESPONSE LENGTH GUIDE:
 - Analysis requests: Detailed response with structure
 - Vague questions: Brief response + clarifying question
 
+SPECIAL HANDLING:
+- If user asks to "erase memory", "clear context", "forget", or similar: 
+  → Respond: <p>Memory cleared! Starting fresh. How can I help you today?</p>
+  → Do NOT reference any previous conversations after this
+  → Do NOT repeat old questions or context
+- If user asks "do you remember" after clearing memory:
+  → Respond: <p>Nope, fresh start! What's on your mind?</p>
+- Never contradict yourself about memory state
+
 Remember: BE BRIEF, NATURAL, and HUMAN. Don't overwhelm users with data unless they specifically ask for analysis. Match their energy and interest level."""
 
     @staticmethod
@@ -643,8 +688,13 @@ Remember: BE BRIEF, NATURAL, and HUMAN. Don't overwhelm users with data unless t
         response = re.sub(r'^```\s*', '', response)
         response = re.sub(r'\s*```$', '', response)
         
-        # Clean up any remaining backticks
+        # Remove any tool code artifacts
+        response = re.sub(r'tool_code\s*#.*?```', '', response, flags=re.DOTALL)
+        response = re.sub(r'```.*?```', '', response, flags=re.DOTALL)
+        
+        # Clean up any remaining backticks and artifacts
         response = response.strip('`').strip()
+        response = re.sub(r'\s+', ' ', response)  # Normalize whitespace
         
         # Ensure proper HTML structure
         if not response.startswith('<'):
