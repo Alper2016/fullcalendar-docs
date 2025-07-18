@@ -90,8 +90,9 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
   const [selectedOrganization, setSelectedOrganization] = useState<string>("");
   const [postType, setPostType] = useState<"now" | "scheduled">("now");
   
-  // NEW: Track the actual post status for real-time updates
+  // Track the actual post status for real-time updates
   const [actualPostStatus, setActualPostStatus] = useState<string | null>(null);
+  const [isPosting, setIsPosting] = useState(false);
 
   // Track if form has been modified (for update functionality)
   const [hasChanges, setHasChanges] = useState(false);
@@ -116,18 +117,7 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
     validateLinkedInOrganization,
     validateLinkedInMedia,
     isLoading: linkedInLoading,
-  } = useLinkedInPost({ 
-    onSuccess: () => {
-      // Update status immediately after successful post
-      if (postType === "now") {
-        setActualPostStatus("published");
-      } else {
-        setActualPostStatus("scheduled");
-      }
-      if (onSuccess) onSuccess();
-    }, 
-    postType 
-  });
+  } = useLinkedInPost({ onSuccess, postType });
 
   // Get connected accounts
   const { data: activeTokens = [], isLoading: isLoadingAccounts } =
@@ -300,24 +290,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
   );
 
   // Mutations for posting
-  const postMutation = usePostToSocialMedia({
-    onSuccess: () => {
-      // Update status immediately after successful post
-      setActualPostStatus("published");
-      resetForm();
-      if (onSuccess) onSuccess();
-    }
-  });
-  
-  const scheduleMutation = useSchedulePost({
-    onSuccess: () => {
-      // Update status immediately after successful schedule
-      setActualPostStatus("scheduled");
-      resetForm();
-      if (onSuccess) onSuccess();
-    }
-  });
-  
+  const postMutation = usePostToSocialMedia();
+  const scheduleMutation = useSchedulePost();
   const updateMutation = useUpdateScheduledPost();
   const deleteMutation = useDeleteScheduledPost();
 
@@ -480,6 +454,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
       return;
     }
 
+    setIsPosting(true);
+
     try {
       // Post to each selected account
       for (const accountId of linkedInAccountIds) {
@@ -520,7 +496,27 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
         }
       }
 
-      // The status update and form reset is now handled in the mutation success callbacks
+      // Update status immediately after successful posting
+      const newStatus = postType === "now" ? "published" : "scheduled";
+      setActualPostStatus(newStatus);
+
+      // Show success notification
+      show({
+        severity: "success",
+        summary: t("SocialMedia.toast.post.success.summary", "Post successful"),
+        detail: t(
+          "SocialMedia.toast.post.success.detail",
+          postType === "now" ? "Content posted successfully" : "Content scheduled successfully"
+        ),
+      });
+
+      // Brief delay to show status, then reset
+      setTimeout(() => {
+        resetForm();
+        setActualPostStatus(null);
+        if (onSuccess) onSuccess();
+      }, 3000);
+
     } catch (error) {
       console.error("Error posting:", error);
       show({
@@ -531,6 +527,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
           "Failed to post content to social media"
         ),
       });
+    } finally {
+      setIsPosting(false);
     }
   };
 
@@ -603,7 +601,6 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
     setUploadedMediaMetadata({});
     setSelectedOrganization("");
     setPostType("now");
-    setActualPostStatus(null); // Reset status
   };
 
   const characterLimit = 280;
@@ -632,7 +629,7 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
           scheduledDate.getMinutes() === 0))) ||
     (hasLinkedInAccount && !linkedInValidation.isValid);
 
-  // Helper function to get status display - now uses actualPostStatus when available
+  // Helper function to get status display
   const getStatusDisplay = (status: string) => {
     const configs = {
       published: {
@@ -707,7 +704,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                 postMutation.isLoading ||
                 scheduleMutation.isLoading ||
                 linkedInLoading ||
-                isUploading
+                isUploading ||
+                isPosting
               }
             >
               <SelectTrigger className="w-full">
@@ -752,7 +750,7 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
               <Select
                 value={selectedOrganization}
                 onValueChange={setSelectedOrganization}
-                disabled={isReadOnly || isLoadingOrganizations}
+                disabled={isReadOnly || isLoadingOrganizations || isPosting}
               >
                 <SelectTrigger className="w-full">
                   <SelectValue
@@ -793,8 +791,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                     postType === "now"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-muted hover:border-primary/40"
-                  }`}
-                  onClick={() => setPostType("now")}
+                  } ${isPosting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={() => !isPosting && setPostType("now")}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <Send className="h-4 w-4" />
@@ -808,8 +806,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                     postType === "scheduled"
                       ? "border-primary bg-primary/10 text-primary"
                       : "border-muted hover:border-primary/40"
-                  }`}
-                  onClick={() => setPostType("scheduled")}
+                  } ${isPosting ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  onClick={() => !isPosting && setPostType("scheduled")}
                 >
                   <div className="flex items-center justify-center gap-2">
                     <CalendarIcon className="h-4 w-4" />
@@ -931,7 +929,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                 postMutation.isLoading ||
                 scheduleMutation.isLoading ||
                 linkedInLoading ||
-                isUploading
+                isUploading ||
+                isPosting
               }
               placeholder={
                 isReadOnly
@@ -999,6 +998,7 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                   }
                   disabled={
                     isUploading ||
+                    isPosting ||
                     (hasLinkedInAccount && uploadedMediaUrls.length > 0)
                   }
                 />
@@ -1069,7 +1069,7 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                       </div>
 
                       {/* Remove button */}
-                      {!isReadOnly && (
+                      {!isReadOnly && !isPosting && (
                         <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
@@ -1133,7 +1133,8 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
                 !hasChanges ||
                 isPostButtonDisabled ||
                 isUploading ||
-                isOverLimit
+                isOverLimit ||
+                isPosting
               }
             >
               {updateMutation.isLoading ? (
@@ -1156,9 +1157,10 @@ const EffSocialMediaPostForm: React.FC<SocialMediaPostFormProps> = ({
             <Button
               className="flex-1 cursor-pointer"
               onClick={handlePost}
-              disabled={isPostButtonDisabled || isUploading || isOverLimit}
+              disabled={isPostButtonDisabled || isUploading || isOverLimit || isPosting}
             >
-              {scheduleMutation.isLoading ||
+              {isPosting ||
+              scheduleMutation.isLoading ||
               postMutation.isLoading ||
               linkedInLoading ? (
                 <div className="flex items-center gap-2">
